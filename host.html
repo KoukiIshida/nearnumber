@@ -9,7 +9,7 @@
         body { font-family: sans-serif; padding: 20px; background-color: #f4f4f9; }
         .screen { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); }
         .screen.active { display: block; }
-        .player-card { border: 1px solid #ccc; padding: 10px; margin: 5px; display: inline-block; text-align: center; width: 150px; border-radius: 8px; background: #fff;}
+        .player-card { border: 1px solid #ccc; padding: 10px; margin: 5px; display: inline-block; text-align: center; width: 160px; border-radius: 8px; background: #fff;}
         .answered { background-color: #d4edda; border-color: #c3e6cb; }
         input[type="text"], input[type="number"] { padding: 8px; margin: 5px; width: 80%; box-sizing: border-box; }
         button { padding: 10px 20px; margin: 5px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px;}
@@ -22,6 +22,11 @@
         .btn-edit:hover { background: #117a8b; }
         .btn-delete { background: #dc3545; padding: 5px 10px; font-size: 14px; }
         .btn-delete:hover { background: #c82333; }
+        /* ▼ 並び替えボタン用のスタイルを追加 ▼ */
+        .btn-move { background: #6c757d; padding: 5px 10px; font-size: 14px; }
+        .btn-move:hover { background: #5a6268; }
+        .btn-move:disabled { background: #e0e0e0; color: #a0a0a0; cursor: not-allowed; }
+        
         .btn-start { background: #ff9800; font-size: 18px; font-weight: bold; padding: 15px 30px; }
         .btn-start:hover { background: #e68a00; }
         #qrcode { margin: 20px 0; }
@@ -61,7 +66,7 @@
     </div>
 
     <div id="screen-play" class="screen">
-        <h2 id="current-question-text">第X問</h2>
+        <h2 id="current-question-text">第X問 / 全Y問 : 問題文</h2>
         <p>状態: <strong id="game-status-text">回答受付中</strong></p>
         
         <div style="margin: 20px 0;">
@@ -81,7 +86,6 @@
     </div>
 
 <script>
-    // --- 通信とゲーム状態の管理 ---
     const peer = new Peer(); 
     let hostId = "";
     let players = {}; 
@@ -90,15 +94,13 @@
     let gameState = 'waiting'; 
     let isRevealed = false;
 
-    // --- 問題の事前保存・読み込み (LocalStorage) ---
-    // 保存されている問題があれば読み込む（なければ空の配列）
     let savedQuestions = JSON.parse(localStorage.getItem('quizAppQuestions')) || [];
 
     window.onload = () => {
         renderQuestions();
     };
 
-    // 問題リストを画面に描画する処理
+    // ▼ 問題リストの描画処理（並び替えボタンを追加） ▼
     function renderQuestions() {
         const listDiv = document.getElementById('questions-list');
         listDiv.innerHTML = '';
@@ -106,12 +108,19 @@
         savedQuestions.forEach((q, i) => {
             const div = document.createElement('div');
             div.className = 'q-list-item';
+            
+            // 最初の問題は「上へ」を押せない、最後の問題は「下へ」を押せないように設定
+            const upDisabled = (i === 0) ? 'disabled' : '';
+            const downDisabled = (i === savedQuestions.length - 1) ? 'disabled' : '';
+
             div.innerHTML = `
                 <div>
                     <strong>Q${i+1}: ${q.text}</strong><br>
                     <span style="color:#28a745; font-size:14px;">正解: ${q.answer}</span>
                 </div>
                 <div>
+                    <button onclick="moveQuestion(${i}, -1)" class="btn-move" ${upDisabled}>▲ 上へ</button>
+                    <button onclick="moveQuestion(${i}, 1)" class="btn-move" ${downDisabled}>▼ 下へ</button>
                     <button onclick="editQuestion(${i})" class="btn-edit">編集</button>
                     <button onclick="deleteQuestion(${i})" class="btn-delete">削除</button>
                 </div>
@@ -120,8 +129,22 @@
         });
         
         document.getElementById('q-count').innerText = savedQuestions.length;
-        // 変更をブラウザに保存
         localStorage.setItem('quizAppQuestions', JSON.stringify(savedQuestions));
+    }
+
+    // ▼ 順番を入れ替える関数を追加しました ▼
+    function moveQuestion(index, direction) {
+        const targetIndex = index + direction;
+        // 範囲外なら処理しない
+        if (targetIndex < 0 || targetIndex >= savedQuestions.length) return;
+        
+        // 配列の要素を入れ替える
+        const temp = savedQuestions[index];
+        savedQuestions[index] = savedQuestions[targetIndex];
+        savedQuestions[targetIndex] = temp;
+        
+        // 画面を再描画して保存
+        renderQuestions();
     }
 
     function saveQuestion() {
@@ -132,12 +155,10 @@
         if(!text || !ans) return alert('問題文と正解の数字を両方入力してください。');
 
         if(editIndex === -1) {
-            // 新規追加
             savedQuestions.push({ text: text, answer: Number(ans) });
         } else {
-            // 編集（上書き）
             savedQuestions[editIndex] = { text: text, answer: Number(ans) };
-            cancelEdit(); // 入力欄をリセット
+            cancelEdit(); 
         }
 
         document.getElementById('q-text-input').value = "";
@@ -169,8 +190,6 @@
         }
     }
 
-
-    // --- 通信の準備 ---
     peer.on('open', (id) => {
         hostId = id;
         document.getElementById('connection-status-msg').innerText = "通信準備が完了しました！ルームを開けます。";
@@ -180,7 +199,7 @@
         conn.on('data', (data) => {
             if (data.type === 'join') {
                 if (!players[data.playerId]) {
-                    players[data.playerId] = { name: data.name, score: 0, currentAnswer: "" };
+                    players[data.playerId] = { name: data.name, score: 0, currentAnswer: "", currentPenalty: 0 };
                 } else {
                     players[data.playerId].name = data.name; 
                 }
@@ -207,7 +226,6 @@
         conn.send({ state: gameState, questionIndex: currentQIndex });
     }
 
-    // --- 画面表示の制御 ---
     function startGameSetup() {
         if (savedQuestions.length === 0) {
             return alert('問題を1つ以上登録してください。');
@@ -216,10 +234,8 @@
             return alert('通信サーバーに接続中です。数秒待ってからもう一度お試しください。');
         }
 
-        // 保存された問題をゲーム用の変数にセット
         questions = [...savedQuestions];
 
-        // URL生成
         let playerUrl = window.location.href.replace('host.html', 'player.html');
         if (!playerUrl.includes('player.html')) playerUrl += 'player.html';
         playerUrl += `?host=${hostId}`;
@@ -253,16 +269,25 @@
 
             const pCard = document.createElement('div');
             pCard.className = 'player-card ' + (p.currentAnswer !== "" ? 'answered' : '');
+            
             let answerText = "考え中...";
+            let penaltyDisplay = "";
             
             if (p.currentAnswer !== "") {
-                answerText = isRevealed ? p.currentAnswer : "回答済み";
+                if (isRevealed) {
+                    answerText = p.currentAnswer;
+                    penaltyDisplay = `<span style="color:red; font-size:16px;">(+${p.currentPenalty})</span>`;
+                } else {
+                    answerText = "回答済み";
+                }
             }
             
             pCard.innerHTML = `
                 <h4>${p.name}</h4>
                 <p style="font-size:12px; color:#666; margin:0;">ペナルティ得点</p>
-                <p style="font-size:24px; font-weight:bold; margin:5px 0;">${p.score}</p>
+                <p style="font-size:24px; font-weight:bold; margin:5px 0;">
+                    ${p.score} ${penaltyDisplay}
+                </p>
                 <hr>
                 <h2>${answerText}</h2>
             `;
@@ -285,9 +310,13 @@
         document.getElementById('btn-finish').style.display = 'none';
         document.getElementById('correct-answer-display').style.display = 'none';
         document.getElementById('game-status-text').innerText = '回答受付中';
-        document.getElementById('current-question-text').innerText = `第${currentQIndex + 1}問: ${questions[currentQIndex].text}`;
+        
+        document.getElementById('current-question-text').innerText = `第${currentQIndex + 1}問 / 全${questions.length}問 : ${questions[currentQIndex].text}`;
 
-        for(let pid in players) { players[pid].currentAnswer = ""; }
+        for(let pid in players) { 
+            players[pid].currentAnswer = ""; 
+            players[pid].currentPenalty = 0; 
+        }
         updatePlayersBoard();
         broadcastState();
     }
@@ -310,11 +339,12 @@
             const p = players[pid];
             if (p.currentAnswer !== "") {
                 const diff = Math.abs(Number(p.currentAnswer) - correctAns);
-                p.score += diff;
+                p.currentPenalty = diff; 
+                p.score += diff;         
             }
         }
         
-        updatePlayersBoard();
+        updatePlayersBoard(); 
         document.getElementById('btn-reveal').style.display = 'none';
         if (currentQIndex < questions.length - 1) {
             document.getElementById('btn-next').style.display = 'inline-block';
