@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta charset="UTF-8">
+    <title>クイズ解答画面</title>
+    <script src="https://unpkg.com/peerjs@1.5.2/dist/peerjs.min.js"></script>
+    <style>
+        body { font-family: sans-serif; text-align: center; padding: 20px; background-color: #f4f4f9; }
+        .screen { display: none; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-top: 20px;}
+        .screen.active { display: block; }
+        input { padding: 15px; font-size: 18px; width: 80%; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 8px; box-sizing: border-box;}
+        button { padding: 15px 30px; font-size: 18px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 8px; width: 80%;}
+        button:hover { background: #218838; }
+        #connection-status { color: #666; font-size: 12px; margin-bottom: 10px; }
+    </style>
+</head>
+<body>
+
+    <div id="connection-status">ホストを検索中...</div>
+
+    <div id="screen-login" class="screen">
+        <h2>ニックネームを入力</h2>
+        <input type="text" id="player-name" placeholder="名前を入力">
+        <button onclick="joinGame()">参加する</button>
+    </div>
+
+    <div id="screen-waiting" class="screen">
+        <h2>待機中です</h2>
+        <p id="wait-message">ホストの進行をお待ちください。</p>
+    </div>
+
+    <div id="screen-input" class="screen">
+        <h2>数字を入力してください</h2>
+        <input type="number" id="answer-input" placeholder="予想する数字">
+        <button onclick="submitAnswer()">送信</button>
+    </div>
+
+<script>
+    // プレイヤーIDの生成・復帰処理 (リロードしても同じ人で入れるように)
+    let myPlayerId = localStorage.getItem('quizPlayerId');
+    if (!myPlayerId) {
+        myPlayerId = 'p_' + Math.random().toString(36).substr(2, 9);
+        localStorage.setItem('quizPlayerId', myPlayerId);
+    }
+
+    // URLからホストIDを取得
+    const urlParams = new URLSearchParams(window.location.search);
+    const hostId = urlParams.get('host');
+    
+    let peer = null;
+    let conn = null;
+    let isConnected = false;
+
+    if (!hostId) {
+        document.getElementById('connection-status').innerText = "エラー: ホスト情報がありません。QRコードからやり直してください。";
+    } else {
+        peer = new Peer();
+        peer.on('open', () => {
+            document.getElementById('connection-status').innerText = "接続準備完了";
+            switchScreen('screen-login');
+        });
+    }
+
+    function switchScreen(id) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(id).classList.add('active');
+    }
+
+    // 参加ボタンを押した時の処理
+    function joinGame() {
+        const name = document.getElementById('player-name').value;
+        if (!name) return alert("名前を入力してください");
+
+        document.getElementById('connection-status').innerText = "ホストに接続中...";
+        
+        // ホストに接続
+        conn = peer.connect(hostId);
+        
+        conn.on('open', () => {
+            isConnected = true;
+            document.getElementById('connection-status').innerText = "接続中 🟢";
+            // ホストに自分の情報を送る
+            conn.send({ type: 'join', playerId: myPlayerId, name: name });
+        });
+
+        // ホストから画面切り替えの指示を受けた時
+        conn.on('data', (data) => {
+            if (data.state === 'waiting' || data.state === 'closed' || data.state === 'finished') {
+                switchScreen('screen-waiting');
+                document.getElementById('wait-message').innerText = 
+                    data.state === 'closed' ? "回答が締め切られました。結果発表をお待ちください。" : 
+                    data.state === 'finished' ? "ゲーム終了！ホストの画面を見てください。" : 
+                    "ホストの進行をお待ちください。";
+            } else if (data.state === 'playing') {
+                document.getElementById('answer-input').value = ""; // 入力欄をクリア
+                switchScreen('screen-input');
+            }
+        });
+
+        conn.on('close', () => {
+            document.getElementById('connection-status').innerText = "切断されました 🔴 再読み込みしてください";
+        });
+    }
+
+    // 回答を送信する処理
+    function submitAnswer() {
+        const ans = document.getElementById('answer-input').value;
+        if (ans === "") return alert("数字を入力してください");
+        if (!isConnected) return alert("ホストと通信できていません");
+
+        conn.send({ type: 'answer', playerId: myPlayerId, answer: Number(ans) });
+        
+        switchScreen('screen-waiting');
+        document.getElementById('wait-message').innerText = "送信完了。他の参加者を待っています...";
+    }
+</script>
+</body>
+</html>
